@@ -43,6 +43,25 @@ structure ProofStep where
   tactic : String
 deriving ToJson, FromJson
 
+/--
+Infer the type of a term in the local context of the first goal
+of a stored proof state.
+-/
+structure TermTypeQuery where
+  proofState : Nat
+  term : String
+deriving ToJson, FromJson
+
+/--
+The result of elaborating and type-checking a term in a proof state.
+-/
+structure TermTypeResponse where
+  term : String
+  termType : String
+  targetType : String
+  matchesTarget : Bool
+deriving ToJson, FromJson
+
 /-- Line and column information for error messages and sorries. -/
 structure Pos where
   line : Nat

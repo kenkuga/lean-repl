@@ -349,6 +349,45 @@ def processFile (s : File) : M IO (CommandResponse ⊕ Error) := do
     pure <| .inr ⟨e.toString⟩
 
 /--
+Infer the type of a term in the local context of the first goal
+of a stored proof state.
+-/
+def queryTermType (q : TermTypeQuery) : M IO (TermTypeResponse ⊕ Error) := do
+  match (← get).proofStates[q.proofState]? with
+  | none =>
+      return .inr ⟨"Unknown proof state."⟩
+  | some proofState =>
+      match Parser.runParserCategory proofState.coreState.env `term q.term with
+      | .error e =>
+          return .inr ⟨"Lean parser error:\n" ++ e⟩
+      | .ok stx =>
+          try
+            let (result, _) ← proofState.runTacticM do
+              Tactic.withMainContext do
+                let expr ← Term.elabTerm stx none
+                let expr ← instantiateMVars expr
+                let termType ← Meta.inferType expr >>= instantiateMVars
+                let goal ← Tactic.getMainGoal
+                let targetType ← goal.getType >>= instantiateMVars
+                let matchesTarget ← Meta.isDefEq termType targetType
+                let termTypeFmt ← Meta.ppExpr termType
+                let targetTypeFmt ← Meta.ppExpr targetType
+                return (
+                  termTypeFmt.pretty,
+                  targetTypeFmt.pretty,
+                  matchesTarget
+                )
+
+            return .inl {
+              term := q.term
+              termType := result.1
+              targetType := result.2.1
+              matchesTarget := result.2.2
+            }
+          catch ex =>
+            return .inr ⟨"Lean error:\n" ++ ex.toString⟩
+
+/--
 Run a single tactic, returning the id of the new proof statement, and the new goals.
 -/
 -- TODO detect sorries?
@@ -384,6 +423,7 @@ inductive Input
 | command : REPL.Command → Input
 | file : REPL.File → Input
 | proofStep : REPL.ProofStep → Input
+| termTypeQuery : REPL.TermTypeQuery → Input
 | pickleEnvironment : REPL.PickleEnvironment → Input
 | unpickleEnvironment : REPL.UnpickleEnvironment → Input
 | pickleProofSnapshot : REPL.PickleProofState → Input
@@ -397,6 +437,8 @@ def parse (query : String) : IO Input := do
       (⟨"Could not parse JSON:\n" ++ e⟩ : Error)
   | .ok j => match fromJson? j with
     | .ok (r : REPL.ProofStep) => return .proofStep r
+    | .error _ => match fromJson? j with
+    | .ok (r : REPL.TermTypeQuery) => return .termTypeQuery r
     | .error _ => match fromJson? j with
     | .ok (r : REPL.PickleEnvironment) => return .pickleEnvironment r
     | .error _ => match fromJson? j with
@@ -430,6 +472,7 @@ where loop : M IO Unit := do
   | .command r => pure <| toJson (← runCommand r)
   | .file r => pure <| toJson (← processFile r)
   | .proofStep r => pure <| toJson (← runProofStep r)
+  | .termTypeQuery r => pure <| toJson (← queryTermType r)
   | .pickleEnvironment r => pure <| toJson (← pickleCommandSnapshot r)
   | .unpickleEnvironment r => pure <| toJson (← unpickleCommandSnapshot r)
   | .pickleProofSnapshot r => pure <| toJson (← pickleProofSnapshot r)
