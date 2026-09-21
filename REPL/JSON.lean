@@ -62,6 +62,37 @@ structure TermTypeResponse where
   matchesTarget : Bool
 deriving ToJson, FromJson
 
+/--
+Request structured information about a stored proof state.
+-/
+structure ProofStateQuery where
+  proofState : Nat
+deriving ToJson, FromJson
+
+/--
+A local declaration in a goal.
+-/
+structure LocalDeclaration where
+  name : String
+  type : String
+deriving ToJson, FromJson
+
+/--
+Structured information about one goal.
+-/
+structure GoalInfo where
+  target : String
+  locals : Array LocalDeclaration
+deriving ToJson, FromJson
+
+/--
+Structured information about a stored proof state.
+-/
+structure ProofStateResponse where
+  proofState : Nat
+  goals : Array GoalInfo
+deriving ToJson, FromJson
+
 /-- Line and column information for error messages and sorries. -/
 structure Pos where
   line : Nat

@@ -388,6 +388,46 @@ def queryTermType (q : TermTypeQuery) : M IO (TermTypeResponse ⊕ Error) := do
             return .inr ⟨"Lean error:\n" ++ ex.toString⟩
 
 /--
+Return structured information about all goals in a stored proof state.
+-/
+def inspectProofState (q : ProofStateQuery) : M IO (ProofStateResponse ⊕ Error) := do
+  match (← get).proofStates[q.proofState]? with
+  | none =>
+      return .inr ⟨"Unknown proof state."⟩
+  | some proofState =>
+      try
+        let (goals, _) ← proofState.runMetaM do
+          proofState.tacticState.goals.mapM fun goal => do
+            goal.withContext do
+              let target ← goal.getType >>= instantiateMVars
+              let targetFmt ← Meta.ppExpr target
+
+              let lctx ← getLCtx
+              let locals ← lctx.foldlM
+                (fun acc decl => do
+                  if decl.isImplementationDetail then
+                    return acc
+                  let type ← instantiateMVars decl.type
+                  let typeFmt ← Meta.ppExpr type
+                  return acc.push {
+                    name := decl.userName.toString
+                    type := typeFmt.pretty
+                  })
+                #[]
+
+              return ({
+                target := targetFmt.pretty
+                locals := locals
+              }: GoalInfo)
+
+        return .inl ({
+          proofState := q.proofState
+          goals := goals.toArray
+        }: ProofStateResponse)
+      catch ex =>
+        return .inr ⟨"Lean error:\n" ++ ex.toString⟩
+
+/--
 Run a single tactic, returning the id of the new proof statement, and the new goals.
 -/
 -- TODO detect sorries?
@@ -424,6 +464,7 @@ inductive Input
 | file : REPL.File → Input
 | proofStep : REPL.ProofStep → Input
 | termTypeQuery : REPL.TermTypeQuery → Input
+| proofStateQuery : REPL.ProofStateQuery → Input
 | pickleEnvironment : REPL.PickleEnvironment → Input
 | unpickleEnvironment : REPL.UnpickleEnvironment → Input
 | pickleProofSnapshot : REPL.PickleProofState → Input
@@ -439,6 +480,8 @@ def parse (query : String) : IO Input := do
     | .ok (r : REPL.ProofStep) => return .proofStep r
     | .error _ => match fromJson? j with
     | .ok (r : REPL.TermTypeQuery) => return .termTypeQuery r
+    | .error _ => match fromJson? j with
+    | .ok (r : REPL.ProofStateQuery) => return .proofStateQuery r
     | .error _ => match fromJson? j with
     | .ok (r : REPL.PickleEnvironment) => return .pickleEnvironment r
     | .error _ => match fromJson? j with
@@ -473,6 +516,7 @@ where loop : M IO Unit := do
   | .file r => pure <| toJson (← processFile r)
   | .proofStep r => pure <| toJson (← runProofStep r)
   | .termTypeQuery r => pure <| toJson (← queryTermType r)
+  | .proofStateQuery r => pure <| toJson (← inspectProofState r)
   | .pickleEnvironment r => pure <| toJson (← pickleCommandSnapshot r)
   | .unpickleEnvironment r => pure <| toJson (← unpickleCommandSnapshot r)
   | .pickleProofSnapshot r => pure <| toJson (← pickleProofSnapshot r)
